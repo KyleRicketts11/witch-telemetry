@@ -24,13 +24,18 @@ import json
 import os
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-DEFAULT_DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "telemetry.jsonl")
+DEFAULT_DATA_FILE = os.environ.get("WITCH_TELEMETRY_FILE") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "telemetry.jsonl"
+)
+# WITCH_TELEMETRY_FILE may be a local path or an http(s) URL to a .jsonl feed.
 
 st.set_page_config(
     page_title="WITCH - Telemetry Command Center",
@@ -42,28 +47,44 @@ st.set_page_config(
 # Data loading
 # ----------------------------------------------------------------------------
 
+def _read_lines(path):
+    """Read lines from a local .jsonl path or an http(s) URL. Returns (lines, is_url)."""
+    if path.startswith(("http://", "https://")):
+        with urlopen(path, timeout=30) as resp:
+            return resp.read().decode("utf-8", errors="replace").splitlines(), True
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().splitlines(), False
+
+
 def load_events(path, hours):
-    """Read .jsonl telemetry, return (dataframe, skipped_count, file_mtime)."""
-    if not os.path.exists(path):
+    """Read .jsonl telemetry, return (dataframe, skipped_count, source_mtime)."""
+    is_url = path.startswith(("http://", "https://"))
+    if not is_url and not os.path.exists(path):
         return None, 0, None
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     rows, skipped = [], 0
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
+    try:
+        lines, _ = _read_lines(path)
+    except (OSError, URLError):
+        return None, 0, None
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            ts = pd.to_datetime(obj.get("ts"), utc=True)
+            if pd.isna(ts) or ts < cutoff:
                 continue
-            try:
-                obj = json.loads(line)
-                ts = pd.to_datetime(obj.get("ts"), utc=True)
-                if pd.isna(ts) or ts < cutoff:
-                    continue
-                obj["ts"] = ts
-                rows.append(obj)
-            except (json.JSONDecodeError, ValueError, TypeError):
-                skipped += 1
+            obj["ts"] = ts
+            rows.append(obj)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            skipped += 1
     df = pd.DataFrame(rows) if rows else pd.DataFrame()
-    mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+    if is_url:
+        mtime = datetime.now(timezone.utc)
+    else:
+        mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
     return df, skipped, mtime
 
 

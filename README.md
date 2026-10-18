@@ -25,7 +25,11 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
 ## Feeding it real telemetry
 
 Point the **"Telemetry file (.jsonl)"** field in the sidebar at any newline-delimited
-JSON file. Each line is one event:
+JSON file — a local path or an `http(s)` URL to a `.jsonl` feed.
+
+On Streamlit Cloud (or any host), set the `WITCH_TELEMETRY_FILE` environment
+variable to the telemetry location instead of typing it in the sidebar. The app
+reads it at startup; the sidebar field still lets you override it live.
 
 ```json
 {"ts": "2026-10-18T12:00:00+00:00", "type": "token_usage", "agent": "witch", "direction": "in", "tokens": 512, "model": "ilands-1", "session": "sess-001"}
